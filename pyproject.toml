@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "yolov3"
+version = "0.1.0"
+description = ""
+authors = ["Ryan Perry"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+torch = {url = "https://download.pytorch.org/whl/cu118/torch-2.0.1%2Bcu118-cp311-cp311-linux_x86_64.whl", python = ">=3.11 <3.12", platform = "linux"}
+torchvision = {url = "https://download.pytorch.org/whl/cu118/torchvision-0.15.2%2Bcu118-cp311-cp311-linux_x86_64.whl", python = ">=3.11 <3.12", platform = "linux"}
+matplotlib = "^3.7.2"
+
+
+[[tool.poetry.source]]
+name = "torch"
+url = "https://download.pytorch.org/whl/cu118"
+priority = "supplemental"
+
+
+[[tool.poetry.source]]
+name = "PyPI"
+priority = "primary"
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.7.0"
+ipykernel = "^6.24.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
