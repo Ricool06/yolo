@@ -28,7 +28,7 @@ def draw_test_image(data: datasets.VOCDetection):
 
 
 def equal_size_transforms(input, target):
-    desired_size = [600, 600]
+    desired_size = [512, 512]
     original_size = [
         int(target["annotation"]["size"]["width"]),
         int(target["annotation"]["size"]["height"]),
@@ -86,7 +86,7 @@ def load_data():
     if "--draw-test" in sys.argv:
         draw_test_image(val_data)
 
-    batch_size = 64
+    batch_size = 4
 
     return (
         DataLoader(train_data, batch_size=batch_size),
@@ -111,31 +111,58 @@ class Yolo(nn.Module):
         #     padding=(kernel_size / 2, kernel_size / 2),
         # )
         self.layer = nn.Sequential(
-            nn.Conv2d(
-                in_channels=3,
-                out_channels=3,
-                kernel_size=3,
-            ),
-            nn.LeakyReLU(),
             # nn.Conv2d(
             #     in_channels=3,
-            #     out_channels=9,
-            #     kernel_size=9,
-            #     stride=3
-            # ),
-            # nn.LeakyReLU(),
-            # nn.Conv2d(
-            #     in_channels=9,
-            #     out_channels=81,
-            #     kernel_size=81,
-            #     stride=9
-            # ),
-            # nn.LeakyReLU(),
-            # nn.Conv2d(
-            #     in_channels=81,
             #     out_channels=3,
-            #     kernel_size=3
+            #     kernel_size=3,
             # ),
+            # nn.LeakyReLU(),
+
+            nn.Conv2d(
+                in_channels=3,
+                out_channels=32,
+                kernel_size=3,
+                stride=1,
+                padding=3 // 2,
+                bias=False
+            ),
+            nn.BatchNorm2d(32, momentum=0.03, eps=1E-4),
+            nn.LeakyReLU(0.1, inplace=True),
+
+            nn.Conv2d(
+                in_channels=32,
+                out_channels=64,
+                kernel_size=3,
+                stride=2,
+                padding=3 // 2,
+                bias=False
+            ),
+            nn.BatchNorm2d(64, momentum=0.03, eps=1E-4),
+            nn.LeakyReLU(0.1, inplace=True),
+
+            nn.Conv2d(
+                in_channels=64,
+                out_channels=32,
+                kernel_size=1,
+                stride=1,
+                padding=1 // 2,
+                bias=False
+            ),
+            nn.BatchNorm2d(32, momentum=0.03, eps=1E-4),
+            nn.LeakyReLU(0.1, inplace=True),
+
+            nn.Conv2d(
+                in_channels=32,
+                out_channels=64,
+                kernel_size=3,
+                stride=1,
+                padding=3 // 2,
+                bias=False
+            ),
+            nn.BatchNorm2d(64, momentum=0.03, eps=1E-4),
+            nn.LeakyReLU(0.1, inplace=True),
+
+            # YOLOv3 from config^^^^ in progress, up to: https://github.com/ultralytics/yolov3/blob/06138062869c41d3df130e07c5aa92fa5a01dad5/cfg/yolov3.cfg#L59
         )
 
         self.device = device
@@ -160,22 +187,91 @@ def make_model():
     return model
 
 
+def train(
+    dataloader: DataLoader,
+    model: Yolo,
+    loss_fn: nn.CrossEntropyLoss,
+    optimiser: torch.optim.SGD,
+):
+    dataset_size = len(dataloader.dataset)
+    model.train()
+
+    for batch, (X, y) in enumerate(dataloader):
+        X, y = X.to(model.device), y.to(model.device)
+
+        prediction = model(X)
+        loss = loss_fn(prediction, y)
+
+        loss.backward()
+        optimiser.step()
+        optimiser.zero_grad()
+
+        if batch % 100 == 0:
+            loss, current = loss.item(), (batch + 1) * len(X)
+            print(f"{loss=} [{current:>5d}/{dataset_size}]")
+
+
+def test(
+    dataloader: DataLoader,
+    model: Yolo,
+    loss_fn: nn.CrossEntropyLoss,
+):
+    dataset_size = len(dataloader.dataset)
+    number_of_batches = len(dataloader)
+    model.eval()
+
+    loss, correct = 0, 0
+
+    with torch.no_grad():
+        for X, y in dataloader:
+            X, y = X.to(model.device), y.to(model.device)
+
+            prediction = model(X)
+            loss = loss_fn(prediction, y).item()
+
+            correct += (prediction.argmax(1) == y).type(torch.float).sum().item()
+
+    loss /= number_of_batches
+    correct /= dataset_size
+
+    print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {loss:>8f} \n")
+
+
+def create_loss_fn_and_optimiser(model: Yolo):
+    return (nn.CrossEntropyLoss(), torch.optim.SGD(model.parameters(), lr=1e-3))
+
+
 if __name__ == "__main__":
     train_loader, val_loader, test_data = load_data()
     model = make_model()
+    loss_fn, optimiser = create_loss_fn_and_optimiser(model)
+
+    if "--train" in sys.argv:
+        for epoch in range(20):
+            print(f"---- {epoch=} ----\n")
+            train(train_loader, model, loss_fn, optimiser)
+
+            test(val_loader, model, loss_fn)
+
+        torch.save(model.state_dict(), "model.pth")
 
     with torch.no_grad():
-        for image_tensor_batch, target in val_loader:
+        for image_tensor_batch, target_batch in val_loader:
             print(f"{image_tensor_batch.size()=}")
+            print(f"{target_batch.size()=}")
             
             out = model(image_tensor_batch.to(model.device))
 
-            for i in range(5):
-                in_img = to_pil_image(image_tensor_batch[i])
-                in_img.save(f"test_images/in{i}.jpeg")
+            for each_out in out:
+                print(f"{each_out.size()=}")
+                break
+
+            # for i in range(5):
+            #     in_img = to_pil_image(image_tensor_batch[i])
+            #     in_img.save(f"test_images/in{i}.jpeg")
                 
-                out_img = to_pil_image(out[i])
-                out_img.save(f"test_images/out{i}.jpeg")
+            #     out_img = to_pil_image(out[i])
+            #     out_img.save(f"test_images/out{i}.jpeg")
 
             
             break
